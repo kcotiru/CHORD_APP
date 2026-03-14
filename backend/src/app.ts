@@ -1,57 +1,48 @@
-import 'dotenv/config';
-import express from 'express';
-import helmet from 'helmet';
-import cors from 'cors';
-import compression from 'compression';
+import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import compression from "compression";
+import morgan from "morgan";
 
-import { connectDB } from './config/database';
-import authRoutes from './routes/auth.routes';
-import artistRoutes from './routes/artist.routes';
-import songRoutes from './routes/song.routes';
-import { errorHandler, notFound } from './middleware/error.middleware';
+import { env } from "./config/env";
+import songsRoutes from "./routes/songs.routes";
+import sectionsRoutes from "./routes/sections.routes";
+import { globalErrorHandler, notFoundHandler } from "./middleware/error.middleware";
 
 const app = express();
 
-// ── Security & Parsing ────────────────────────────────────────────────────────
+// ── Security & compression ────────────────────────────────────────────────────
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') ?? '*',
+    origin: env.ALLOWED_ORIGINS.split(",").map((o: string) => o.trim()),
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
 app.use(compression());
-app.use(express.json({ limit: '1mb' }));
+
+// ── Body parsing ──────────────────────────────────────────────────────────────
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// ── Health Check ──────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// ── Request logging ───────────────────────────────────────────────────────────
+if (env.NODE_ENV !== "test") {
+  app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
+}
+
+// ── Health check (no auth required) ──────────────────────────────────────────
+app.get("/health", (_req: import("express").Request, res: import("express").Response) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // ── API Routes ────────────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/artists', artistRoutes);
-app.use('/api/songs', songRoutes);
+app.use("/songs", songsRoutes);
+app.use("/sections", sectionsRoutes);
 
-// ── Error Handling ────────────────────────────────────────────────────────────
-app.use(notFound);
-app.use(errorHandler);
-
-// ── Start ─────────────────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT ?? '3000', 10);
-
-async function bootstrap() {
-  await connectDB();
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`   ENV: ${process.env.NODE_ENV ?? 'development'}`);
-  });
-}
-
-bootstrap().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// ── 404 + Global error handler (must be last) ─────────────────────────────────
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 export default app;

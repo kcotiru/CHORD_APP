@@ -1,29 +1,63 @@
-import { Response } from 'express';
+import { Response } from "express";
+import { PaginationMeta } from "../types/api.types";
+
+interface SuccessPayload<T> {
+  status: "success";
+  data: T;
+  message?: string;
+}
+
+interface PaginatedPayload<T> extends SuccessPayload<T[]> {
+  pagination: PaginationMeta;
+}
+
+interface ErrorPayload {
+  status: "error";
+  message: string;
+  code?: string;
+  errors?: unknown;
+}
 
 export class ApiResponse {
-  static success<T>(res: Response, data: T, message?: string, statusCode = 200) {
-    return res.status(statusCode).json({ status: 'success', message, data });
+  static ok<T>(res: Response, data: T, message?: string): Response {
+    const body: SuccessPayload<T> = { status: "success", data };
+    if (message) body.message = message;
+    return res.status(200).json(body);
   }
 
-  static created<T>(res: Response, data: T, message?: string) {
-    return this.success(res, data, message, 201);
+  static created<T>(res: Response, data: T, message?: string): Response {
+    const body: SuccessPayload<T> = { status: "success", data };
+    if (message) body.message = message;
+    return res.status(201).json(body);
   }
 
-  static noContent(res: Response) {
+  static noContent(res: Response): Response {
     return res.status(204).send();
   }
 
   static paginated<T>(
     res: Response,
     data: T[],
-    page: number,
-    limit: number,
-    total: number
-  ) {
-    return res.json({
-      status: 'success',
+    pagination: PaginationMeta
+  ): Response {
+    const body: PaginatedPayload<T> = {
+      status: "success",
       data,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-    });
+      pagination,
+    };
+    return res.status(200).json(body);
+  }
+
+  static error(
+    res: Response,
+    statusCode: number,
+    message: string,
+    code?: string,
+    errors?: unknown
+  ): Response {
+    const body: ErrorPayload = { status: "error", message };
+    if (code) body.code = code;
+    if (errors !== undefined) body.errors = errors;
+    return res.status(statusCode).json(body);
   }
 }

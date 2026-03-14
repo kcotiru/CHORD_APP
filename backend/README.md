@@ -1,192 +1,260 @@
-# backend
+# 🎵 ChordRepo API
 
-A Node/Express/TypeScript REST API for managing chord chart songs with built-in parsing and transposing.
+Production-ready REST API for ChordRepo — built with **Node.js**, **Express**, **TypeScript**, and **Supabase**.
 
-## Stack
+---
 
-- **Runtime**: Node.js + TypeScript
-- **Framework**: Express 4
-- **Database**: PostgreSQL (via `pg` pool)
-- **Auth**: JWT (access + refresh tokens)
-- **Validation**: Zod
-- **Security**: Helmet, CORS, bcrypt
+## Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Node.js | ≥ 18 |
+| npm | ≥ 9 |
+| Supabase project | Any plan |
 
 ---
 
 ## Setup
 
+### 1. Install dependencies
+
 ```bash
-cp .env.example .env        # fill in your values
 npm install
-psql -d your_db -f migrations/001_initial_schema.sql
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in your Supabase credentials:
+
+```env
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+PORT=3000
+NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+> Keys are found in **Supabase Dashboard → Project Settings → API**.
+
+### 3. Apply the database schema
+
+Run the original schema first (from `chordrepo.sql`), then apply the RPC functions:
+
+```bash
+# In Supabase Dashboard → SQL Editor, paste and run:
+# 1. chordrepo.sql           (tables, triggers, RLS)
+# 2. supabase/bulk_import_sections.sql   (RPC functions)
+```
+
+Or via Supabase CLI:
+
+```bash
+supabase db reset  # if using local dev
+```
+
+### 4. Run in development
+
+```bash
 npm run dev
 ```
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
 src/
-├── app.ts                    # Entry point
 ├── config/
-│   └── database.ts           # pg Pool + connectDB()
-├── controllers/              # HTTP layer
-├── services/                 # Business logic
-├── repositories/             # SQL queries
-├── routes/                   # Route definitions
-├── middleware/               # auth, validation, error handler
+│   ├── env.ts              # Zod-validated env vars — app exits on bad config
+│   └── supabase.ts         # Admin client + per-request user-scoped client factory
+├── types/
+│   ├── database.types.ts   # Raw DB entity types (mirrors SQL schema 1-to-1)
+│   └── api.types.ts        # Zod schemas + inferred DTO types
+├── middleware/
+│   ├── auth.middleware.ts  # JWT extraction → user-scoped Supabase client on req
+│   └── error.middleware.ts # Global error handler + PG error code mapper
 ├── utils/
-│   ├── chord.utils.ts        # Parser + Transposer
-│   ├── errors.ts             # Custom AppError classes
-│   ├── response.ts           # ApiResponse helpers
-│   └── validation.ts         # Zod schemas
-└── types/
-    └── index.ts              # Shared TS interfaces
+│   ├── errors.ts           # AppError hierarchy + Postgres error mapper
+│   └── response.ts         # Typed ApiResponse helpers
+├── services/               # Business logic — receive/return typed objects
+├── controllers/            # HTTP layer — parse request, call service, send response
+├── routes/                 # Route definitions (services instantiated per-request)
+├── app.ts                  # Express app (middleware + routes, no listen)
+└── server.ts               # listen() + graceful shutdown
+supabase/
+└── bulk_import_sections.sql  # Transactional RPC functions
 ```
+
+### Key design decisions
+
+**Per-request Supabase client** — `authenticate` middleware creates a `createClient()` instance for every request, passing the user's JWT in the `Authorization` header. This means Supabase evaluates `auth.uid()` correctly for every query, so all RLS policies (`owner_id = auth.uid()`) are enforced automatically — no manual user-id filtering needed in most queries.
+
+**Zod as single source of truth** — every DTO is defined as a Zod schema; TypeScript types are inferred from it. Validation happens in controllers before the service layer is touched.
+
+**PostgreSQL error mapping** — the global error handler checks `error.code` against known PG error codes (`23514` check violation, `23505` unique violation, etc.) and returns clean 400-level responses with the constraint name and detail.
 
 ---
 
 ## API Reference
 
-### Auth
-
-| Method | Path               | Body                          | Auth | Description              |
-|--------|--------------------|-------------------------------|------|--------------------------|
-| POST   | /api/auth/register | `{ username, password }`      | –    | Register new user        |
-| POST   | /api/auth/login    | `{ username, password }`      | –    | Login → tokens           |
-| POST   | /api/auth/refresh  | `{ refreshToken }`            | –    | Refresh access token     |
-
-### Artists
-
-| Method | Path              | Auth     | Description              |
-|--------|-------------------|----------|--------------------------|
-| GET    | /api/artists      | –        | List all (paginated)     |
-| GET    | /api/artists/:slug| –        | Get by slug              |
-| POST   | /api/artists      | Bearer   | Create artist            |
-| PATCH  | /api/artists/:id  | Bearer   | Update artist            |
-| DELETE | /api/artists/:id  | Bearer   | Delete (cascades songs)  |
+All endpoints require `Authorization: Bearer <supabase-jwt>`.
 
 ### Songs
 
-| Method | Path                         | Auth              | Description                          |
-|--------|------------------------------|-------------------|--------------------------------------|
-| GET    | /api/songs                   | –                 | List all (paginated, `?search=`)     |
-| GET    | /api/songs/:id               | –                 | Get by ID                            |
-| GET    | /api/songs/by-slug/:slug     | –                 | Get by slug                          |
-| GET    | /api/songs/by-artist/:id     | –                 | Songs for an artist                  |
-| POST   | /api/songs                   | Bearer            | Create song                          |
-| PATCH  | /api/songs/:id               | Bearer            | Update song                          |
-| DELETE | /api/songs/:id               | Bearer            | Delete song                          |
-| GET    | /api/songs/:id/parse         | –                 | Parse content → ContentBlocks        |
-| POST   | /api/songs/:id/transpose     | Bearer (if save)  | Transpose chord chart                |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/songs` | List songs with filters + pagination |
+| `POST` | `/songs` | Create a song |
+| `GET` | `/songs/:id/full` | Song + sections + bars + user preference |
+| `PATCH` | `/songs/:id` | Update song fields |
+| `DELETE` | `/songs/:id` | Delete a song (owner only) |
 
----
+#### `GET /songs` — Query params
 
-## Chord Chart System
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Case-insensitive partial match |
+| `artist` | string | — | Case-insensitive partial match |
+| `limit` | number | `20` | Max 100 |
+| `offset` | number | `0` | Pagination offset |
 
-### Content Format
+**Response**
 
+```json
+{
+  "status": "success",
+  "data": [ ...songs ],
+  "pagination": { "limit": 20, "offset": 0, "total": 142 }
+}
 ```
-[Intro]
-| G | C |
-[Verse 1]
-| G | D | Em | C |
-[Chorus]
-| C | G | Am | F |
-```
 
-### `GET /api/songs/:id/parse`
-
-Returns typed `ContentBlock[]` for UI rendering:
+#### `GET /songs/:id/full` — Response shape
 
 ```json
 {
   "status": "success",
   "data": {
-    "song": { "song_id": 1, "title": "Example", "root_key": "G", ... },
-    "blocks": [
-      { "type": "section_header", "raw_text": "[Intro]" },
-      { "type": "chord_line",     "raw_text": "| G | C |" },
-      { "type": "section_header", "raw_text": "[Verse 1]" },
-      { "type": "chord_line",     "raw_text": "| G | D | Em | C |" }
-    ]
+    "id": "...",
+    "name": "Blackbird",
+    "artist": "The Beatles",
+    "original_key": "G",
+    "bpm": 96,
+    "sections": [
+      {
+        "id": "...",
+        "name": "Verse",
+        "order_index": 0,
+        "bars": [
+          { "bar_order": 0, "chords": ["G", "Am7"], "repeat_count": 1, "starts_new_line": false }
+        ]
+      }
+    ],
+    "user_preference": {
+      "transposed_key": "F",
+      "updated_at": "2024-01-01T00:00:00Z"
+    }
   }
 }
 ```
 
-### `POST /api/songs/:id/transpose`
-
-```json
-{
-  "semitones": 2,
-  "preference": "sharp",
-  "save": false
-}
-```
-
-| Field       | Type    | Required | Default | Notes                              |
-|-------------|---------|----------|---------|------------------------------------|
-| semitones   | int     | ✅        | –       | -11 to 11                          |
-| preference  | string  | –        | "sharp" | `"sharp"` or `"flat"`              |
-| save        | boolean | –        | false   | Persist to DB (requires Bearer)    |
-
-**Response:**
-
-```json
-{
-  "status": "success",
-  "data": {
-    "song": { ... },
-    "newRootKey": "A",
-    "blocks": [
-      { "type": "section_header", "raw_text": "[Intro]" },
-      { "type": "chord_line",     "raw_text": "| A | D |" }
-    ]
-  }
-}
-```
-
-### UI Rendering Suggestion (React/HTML)
-
-```tsx
-{blocks.map((block, i) =>
-  block.type === 'section_header' ? (
-    <h3 key={i} style={{ fontWeight: 'bold', marginTop: '1rem' }}>
-      {block.raw_text}
-    </h3>
-  ) : (
-    <pre key={i} style={{ fontFamily: 'monospace', margin: 0 }}>
-      {block.raw_text}
-    </pre>
-  )
-)}
-```
+> `user_preference` is `null` when the authenticated user has no saved transposition.
 
 ---
 
-## Enharmonic Equivalents
+### Sections
 
-When transposing, the API selects between `#` and `b` spellings based on `preference`:
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/songs/:id/sections/bulk` | Atomic bulk import of sections + bars |
+| `PATCH` | `/sections/:id/position` | Reorder a section |
 
-| Semitone index | sharp | flat |
-|----------------|-------|------|
-| 1              | C#    | Db   |
-| 3              | D#    | Eb   |
-| 6              | F#    | Gb   |
-| 8              | G#    | Ab   |
-| 10             | A#    | Bb   |
+#### `POST /songs/:id/sections/bulk` — Body
+
+```json
+{
+  "sections": [
+    {
+      "name": "Verse",
+      "order_index": 0,
+      "bars": [
+        {
+          "bar_order": 0,
+          "chords": ["G", "Em"],
+          "repeat_count": 2,
+          "starts_new_line": false
+        }
+      ]
+    },
+    {
+      "name": "Chorus",
+      "order_index": 1,
+      "bars": []
+    }
+  ]
+}
+```
+
+All sections and bars are inserted atomically — any failure rolls back the entire import.
+
+#### `PATCH /sections/:id/position` — Body
+
+```json
+{ "new_order_index": 2 }
+```
+
+Shifts all sections between the old and new position by ±1, then places the section at `new_order_index`. Works correctly in both directions (moving up or down).
 
 ---
 
-## Error Format
+### Transpose / Preferences
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `PUT` | `/songs/:id/transpose` | Upsert transposed key preference |
+| `DELETE` | `/songs/:id/transpose` | Remove preference |
+
+#### `PUT /songs/:id/transpose` — Body
+
+```json
+{ "transposed_key": "Bbm" }
+```
+
+Accepts loose formats (e.g. `"bbmin"`, `"c#"`) — the DB trigger normalises them automatically. Returns the stored (normalised) preference.
+
+---
+
+## Error Response Format
 
 ```json
 {
   "status": "error",
-  "message": "Validation failed",
-  "errors": {
-    "root_key": ["root_key must be a valid musical note (e.g. C, F#, Bb)"]
-  }
+  "message": "Duplicate value on uq_user_song_pref: Key (user_id, song_id)=(...) already exists.",
+  "code": "CONFLICT",
+  "errors": { ... }   // only present for validation errors (Zod field errors)
 }
+```
+
+### HTTP Status Codes
+
+| Code | When |
+|------|------|
+| `400` | Validation failure, DB check constraint violated |
+| `401` | Missing/invalid/expired JWT |
+| `403` | Authenticated but not the owner |
+| `404` | Resource not found |
+| `409` | Unique constraint violation |
+| `500` | Unexpected server error |
+
+---
+
+## Build for Production
+
+```bash
+npm run build    # compiles TS → dist/
+npm start        # runs dist/server.js
 ```

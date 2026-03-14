@@ -1,34 +1,67 @@
-import { Request, Response, NextFunction } from 'express';
-import { AppError } from '../utils/errors';
+import { Request, Response, NextFunction } from "express";
+import { ZodError } from "zod";
+import { AppError, mapPostgresError } from "../utils/errors";
+import { ApiResponse } from "../utils/response";
+import { env } from "../config/env";
 
-export function errorHandler(
-  err: Error,
+/**
+ * Global error handler — must be registered LAST in the Express middleware
+ * chain (after all routes). Express identifies it by its 4-argument signature.
+ */
+export function globalErrorHandler(
+  err: unknown,
   _req: Request,
   res: Response,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _next: NextFunction
-) {
+): void {
+  // ── 1. Zod validation errors (request body / query) ─────────────────────
+  if (err instanceof ZodError) {
+    ApiResponse.error(
+      res,
+      400,
+      "Validation failed",
+      "VALIDATION_ERROR",
+      err.flatten().fieldErrors
+    );
+    return;
+  }
+
+  // ── 2. Our own typed application errors ──────────────────────────────────
   if (err instanceof AppError) {
-    return res.status(err.statusCode).json({
-      status: 'error',
-      message: err.message,
-      ...(err.errors && { errors: err.errors }),
-    });
+    ApiResponse.error(res, err.statusCode, err.message, err.code);
+    return;
   }
 
-  // PostgreSQL unique-violation
-  if ((err as any).code === '23505') {
-    return res.status(409).json({ status: 'error', message: 'Duplicate entry' });
+  // ── 3. Supabase wraps Postgres errors — extract and map them ─────────────
+  if (err && typeof err === "object") {
+    // Supabase JS client surfaces PG errors on err.cause or err directly
+    const asObj = err as Record<string, unknown>;
+    const pgError =
+      mapPostgresError(err) ?? mapPostgresError(asObj["cause"]);
+    if (pgError) {
+      ApiResponse.error(res, pgError.statusCode, pgError.message, pgError.code);
+      return;
+    }
   }
 
-  // PostgreSQL check-constraint violation
-  if ((err as any).code === '23514') {
-    return res.status(400).json({ status: 'error', message: 'Invalid value for field' });
+  // ── 4. Unknown / unexpected errors ───────────────────────────────────────
+  const errMessage =
+    err instanceof Error ? err.message : String(err);
+  const message =
+    env.NODE_ENV === "production" ? "An unexpected error occurred" : errMessage;
+
+  if (env.NODE_ENV !== "production") {
+    console.error("[Unhandled Error]", err);
   }
 
-  console.error('Unhandled error:', err);
-  return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  ApiResponse.error(res, 500, message, "INTERNAL_ERROR");
+
 }
 
-export function notFound(_req: Request, res: Response) {
-  res.status(404).json({ status: 'error', message: 'Route not found' });
+/**
+ * Catch-all for routes that don't exist.
+ */
+export function notFoundHandler(req: Request, res: Response): void {
+  ApiResponse.error(res, 404, `Route ${req.method} ${req.path} not found`, "NOT_FOUND");
 }

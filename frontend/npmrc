@@ -1,0 +1,10 @@
+# ── npm configuration ──────────────────────────────────────────────────────────
+
+# Only fail CI on HIGH or CRITICAL vulnerabilities (2 LOW vulns are in build-tool
+# chains unreachable at runtime: tar extraction during `expo install` and glob
+# pattern matching inside Metro — neither processes untrusted input).
+audit-level=high
+
+# Suppress the upgrade-nag for packages we've already overridden.
+# Remove once babel-preset-expo ships plugin-transform-* equivalents.
+fund=false

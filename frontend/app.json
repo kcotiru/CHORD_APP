@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "ChordRepo",
+    "slug": "chordrepo-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#080B0F"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.chordrepo.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#080B0F"
+      },
+      "package": "com.chordrepo.app"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-splash-screen"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "564ac4f8-5387-4448-a407-48c3b6d59004"
+      }
+    }
+  }
+}
