@@ -11,5 +11,6 @@ web-build/
 *.mobileprovision
 *.orig.*
 web-build/
-/android
-/ios
+google-play-key.json
+android/
+ios/

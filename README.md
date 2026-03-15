@@ -1,138 +1,165 @@
-# 🎵 ChordRepo — React Native App
+# ChordRepo
 
-Stage-ready chord sheet viewer built with **Expo**, **React Navigation**, and **Zustand**.
-
----
+A chord sheet manager for musicians — built with React Native (Expo SDK 51), TypeScript, and Supabase. Manage songs, build setlist lineups, transpose keys, and adjust chord display size — all synced to the cloud.
 
 ## Prerequisites
 
-| Tool        | Version  |
-|-------------|----------|
-| Node.js     | ≥ 18     |
-| Expo CLI    | latest   |
-| iOS/Android | Expo Go or bare workflow |
+| Tool | Version | Install |
+|------|---------|---------|
+| Node.js | >= 18 | [nodejs.org](https://nodejs.org) |
+| npm | >= 8.3 | bundled with Node |
+| EAS CLI | >= 10 | `npm install -g eas-cli` |
+| Expo account | — | [expo.dev](https://expo.dev) |
 
----
+## Local Development
 
-## Setup
+### 1. Clone & install
 
 ```bash
-# 1. Install
+git clone <repo-url>
 cd chordrepo-app
 npm install
-
-# 2. Configure environment
-cp .env.example .env
-# Fill in EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, EXPO_PUBLIC_API_URL
-
-# 3. Start
-npx expo start
 ```
 
-> **On a physical device** — update `EXPO_PUBLIC_API_URL` in `.env` to your
-> machine's LAN IP (e.g. `http://192.168.1.42:3000`) so the device can
-> reach the Express API.
+### 2. Configure environment
 
----
+```bash
+cp .env.example .env
+# Edit .env with your real Supabase credentials
+```
+
+### 3. Start with Expo Go (JS changes only)
+
+```bash
+npm start
+# Scan the QR code with the Expo Go app on your device
+```
+
+> **Limitation:** Expo Go is a sandbox and does not support all native modules. Use a dev client build (below) for full native feature parity.
+
+### 4. Start with a development client (recommended)
+
+A dev client is a custom native build that includes all production native modules but still supports hot reload.
+
+```bash
+# Build the dev client once (requires EAS setup — see below)
+npm run build:dev:ios       # iOS Simulator
+npm run build:dev:android   # Android
+
+# Then start Metro pointing at the dev client
+npm run start:dev-client
+```
+
+## Production Builds (EAS)
+
+### First-time EAS setup
+
+```bash
+# Log in to Expo
+eas login
+
+# Link this project to your Expo account.
+# This writes the real projectId and updates.url into app.json — commit that change.
+npx eas project:init
+
+# Set secrets so EAS can inject Supabase credentials at build time
+# See docs/EAS_SECRETS.md for full details
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL --value "https://..."
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value "..."
+```
+
+> **Important:** `npx eas project:init` must be run before any build. It writes `extra.eas.projectId` and `updates.url` into `app.json`. Commit that change — without it `expo prebuild` will fail during the EAS build, causing a misleading ENOENT error on the signing injection step.
+
+### Build commands
+
+```bash
+# Preview build — internal distribution (TestFlight / Firebase App Distribution)
+npm run build:preview
+
+# Production build — App Store / Play Store ready
+npm run build:production
+
+# Platform-specific
+npm run build:production:ios
+npm run build:production:android
+```
+
+Builds run in the EAS cloud. Monitor progress at [expo.dev/builds](https://expo.dev/builds).
+
+### Submit to stores
+
+```bash
+npm run submit:ios        # Uploads to App Store Connect
+npm run submit:android    # Uploads to Google Play
+```
+
+> Configure store credentials in `eas.json` under `"submit"` before running.
+
+### OTA updates (no rebuild needed for JS-only changes)
+
+```bash
+npm run update
+```
+
+EAS Update pushes a new JS bundle to users. The `runtimeVersion` in `app.json` controls compatibility — only devices running the matching native binary will receive the update.
+
+## Project Structure
+
+```
+chordrepo-app/
+├── App.tsx                   # Root: fonts, splash, auth init
+├── app.json                  # Expo / EAS config (runtimeVersion, updates, etc.)
+├── eas.json                  # EAS Build profiles (development / preview / production)
+├── metro.config.js           # Metro bundler config (required for native builds)
+├── assets/
+│   ├── icon.png              # App icon (1024×1024)
+│   ├── splash.png            # Splash screen
+│   └── adaptive-icon.png     # Android adaptive icon foreground
+├── src/
+│   ├── api/
+│   │   ├── songs.ts          # CRUD + bulk import via Supabase client
+│   │   ├── preferences.ts    # User transpose preferences
+│   │   └── errors.ts         # Typed error helpers
+│   ├── components/
+│   │   ├── ChordSheet.tsx    # Renders bars + chords with transpose support
+│   │   ├── SongCard.tsx      # List item for a song
+│   │   ├── SongFormModal.tsx # Create / edit song modal
+│   │   ├── TransposePicker.tsx
+│   │   ├── ConfirmDialog.tsx
+│   │   └── FAB.tsx           # Floating action button
+│   ├── navigation/
+│   │   ├── RootNavigator.tsx # Auth gate → Tab navigator
+│   │   └── types.ts          # Navigation param list types
+│   ├── screens/
+│   │   ├── Auth/LoginScreen.tsx
+│   │   ├── HomeScreen.tsx    # Setlist / lineup
+│   │   ├── LibraryScreen.tsx # Paginated song browser
+│   │   ├── SongDetailScreen.tsx
+│   │   └── SettingsScreen.tsx
+│   ├── store/
+│   │   ├── authStore.ts      # Supabase auth + shared supabase client
+│   │   ├── lineupStore.ts    # In-memory setlist (Zustand)
+│   │   └── settingsStore.ts  # Chord font size (persisted)
+│   ├── theme/index.ts        # Colors, typography, spacing, radii
+│   └── types/index.ts        # Domain types mirroring Supabase schema
+└── docs/
+    ├── EAS_SECRETS.md        # How to configure EAS Secrets
+    └── superpowers/plans/    # Implementation planning docs
+```
 
 ## Architecture
 
-```
-src/
-├── api/
-│   ├── client.ts           ← Fetch wrapper — auto-injects JWT from authStore
-│   ├── songs.ts            ← All /songs endpoints
-│   └── preferences.ts      ← PUT/DELETE /songs/:id/transpose
-├── components/
-│   ├── ChordSheet.tsx      ← Section + bar + chord token renderer
-│   ├── ConfirmDialog.tsx   ← Destructive action modal
-│   ├── FAB.tsx             ← Floating action button
-│   ├── SongCard.tsx        ← Reusable song list row
-│   ├── SongFormModal.tsx   ← Create/edit metadata bottom sheet
-│   └── TransposePicker.tsx ← Horizontal key selector
-├── navigation/
-│   ├── RootNavigator.tsx   ← Auth gate → Tab → stacks
-│   └── types.ts            ← Typed route params
-├── screens/
-│   ├── Auth/LoginScreen.tsx
-│   ├── HomeScreen.tsx      ← The Lineup
-│   ├── LibraryScreen.tsx   ← Searchable song list
-│   ├── SongDetailScreen.tsx← Lead sheet + transpose + owner actions
-│   └── SettingsScreen.tsx  ← Font size slider, account
-├── store/
-│   ├── authStore.ts        ← Supabase auth, JWT, guest mode (Zustand)
-│   ├── lineupStore.ts      ← Ordered lineup (persisted AsyncStorage)
-│   └── settingsStore.ts    ← Font size (persisted AsyncStorage)
-└── theme/
-    └── index.ts            ← All design tokens (Stage Lights dark theme)
-```
+- **Direct-to-Supabase** — No backend server. The Supabase JS client runs in-app; Row Level Security (RLS) policies enforce per-user data access.
+- **Auth** — Supabase Auth (email/password) with session persistence via AsyncStorage. Guest mode provides read-only library access.
+- **State** — Zustand for global state (auth, lineup, settings). Component-local state for UI.
+- **Navigation** — React Navigation native stack + bottom tabs. Auth gate at the root level.
+- **OTA updates** — `expo-updates` with `appVersion` runtime policy. JS-only changes deploy instantly; native changes require a new build.
 
----
+## Environment Variables
 
-## Design System — Stage Lights 🎭
+| Variable | Where to set |
+|----------|-------------|
+| `EXPO_PUBLIC_SUPABASE_URL` | `.env` (local) · EAS Secret (cloud) |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | `.env` (local) · EAS Secret (cloud) |
 
-| Token        | Value     | Usage                            |
-|--------------|-----------|----------------------------------|
-| `background` | `#080B0F` | Stage black — root background    |
-| `chord`      | `#F0C040` | Amber — chord symbols, primary   |
-| `section`    | `#4ECDC4` | Teal — section labels            |
-| `surface`    | `#0F1419` | Cards, inputs                    |
-| `textPrimary`| `#F0EDE8` | Warm off-white body text         |
-
-**Fonts:** `SpaceMono` for chords (monospace alignment), `DM Sans` for all UI chrome.
-
----
-
-## Screens
-
-### The Lineup (`HomeScreen`)
-- Curated ordered list persisted to device storage
-- **Add to Lineup** modal: searches the API, tap to add/remove
-- **New Song FAB**: opens `SongFormModal` (auth only)
-
-### Library (`LibraryScreen`)
-- Paginated list from `GET /songs`
-- Debounced search by name or artist (toggle filter)
-- Infinite scroll (25 items/page)
-- **New Song FAB** (auth only)
-
-### Song Detail (`SongDetailScreen`)
-- Metadata: title, artist, key badge, BPM, time signature
-- `ChordSheet` — renders every section → bar → chord, driven by `chordFontSize` from settings store
-- `TransposePicker` — horizontal key picker; calls `PUT /songs/:id/transpose`; resets call `DELETE`
-- **Bookmark** icon: add/remove from lineup
-- **Edit / Delete** icons: visible only to the song's owner (auth.uid === owner_id)
-
-### Settings (`SettingsScreen`)
-- Live chord size slider (14–32 pt) with real-time preview
-- Account card: email, guest indicator, sign-out
-
----
-
-## Auth Flow
-
-```
-App launch
-  ↓
-initialize() — restores Supabase session from storage
-  ↓
-isInApp? (isAuthenticated || isGuest)
-  ├── YES → TabNavigator
-  └── NO  → LoginScreen
-              ├── Sign In / Sign Up → Supabase Auth
-              └── Continue as Guest → guest mode (read-only)
-```
-
-`canEdit` (`= isAuthenticated && !isGuest`) gates all write UI:
-FABs, Edit/Delete icons, TransposePicker.
-
----
-
-## Note on `@react-native-community/slider`
-
-`SettingsScreen` imports `Slider` from `@react-native-community/slider`.
-Add it to your project:
-
-```bash
-npx expo install @react-native-community/slider
-```
+See `docs/EAS_SECRETS.md` for step-by-step setup.
